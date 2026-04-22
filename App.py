@@ -31,7 +31,14 @@ lottie = load_lottie("https://assets10.lottiefiles.com/packages/lf20_jcikwtux.js
 st_lottie(lottie, height=200)
 
 # Load NLP model
-nlp = spacy.load("en_core_web_sm")
+import spacy
+from spacy.cli import download
+
+try:
+    nlp = spacy.load("en_core_web_sm")
+except:
+    download("en_core_web_sm")
+    nlp = spacy.load("en_core_web_sm")
 
 # 🎨 Styling (AFTER import)
 st.markdown("""
