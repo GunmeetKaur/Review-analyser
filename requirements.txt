@@ -4,3 +4,4 @@ spacy
 textblob
 wordcloud
 matplotlib
+streamlit-lottie
