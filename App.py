@@ -1,5 +1,3 @@
-import os
-os.system("python -m spacy download en_core_web_sm")
 import streamlit as st
 import pandas as pd
 import spacy
@@ -9,31 +7,45 @@ import matplotlib.pyplot as plt
 from collections import Counter
 import csv
 import time
+from streamlit_lottie import st_lottie
+import requests
 
+# Load spacy model with error handling
+@st.cache_resource
+def load_spacy_model():
+    try:
+        return spacy.load("en_core_web_sm")
+    except OSError:
+        st.error("⚠️ Spacy model not found. Please check requirements.txt configuration.")
+        st.stop()
+
+nlp = load_spacy_model()
+
+# Lottie animation loader
+def load_lottie(url):
+    try:
+        r = requests.get(url, timeout=5)
+        if r.status_code == 200:
+            return r.json()
+    except:
+        return None
+
+# Animated title
 placeholder = st.empty()
-
 text = "📊 Customer Review Analysis Dashboard"
-
 typed = ""
 
 for char in text:
     typed += char
     placeholder.markdown(f"<h1 style='text-align:center'>{typed}</h1>", unsafe_allow_html=True)
     time.sleep(0.05)
-    from streamlit_lottie import st_lottie
-import requests
 
-def load_lottie(url):
-    return requests.get(url).json()
-
+# Load Lottie animation
 lottie = load_lottie("https://assets10.lottiefiles.com/packages/lf20_jcikwtux.json")
+if lottie:
+    st_lottie(lottie, height=200)
 
-st_lottie(lottie, height=200)
-
-# Load NLP model
-nlp = spacy.load("en_core_web_sm")
-
-# 🎨 Styling (AFTER import)
+# Styling
 st.markdown("""
 <style>
 .main {
@@ -48,13 +60,8 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Title
-
+# Subtitle
 st.markdown("Analyze real customer reviews using NLP 🚀")
-# Load NLP model
-nlp = spacy.load("en_core_web_sm")
-
-
 
 # Upload CSV
 file = st.file_uploader("Upload CSV", type=["csv"])
