@@ -7,24 +7,16 @@ from collections import Counter
 
 import streamlit as st
 import pandas as pd
-import spacy
 from textblob import TextBlob
 from wordcloud import WordCloud
 
 st.set_page_config(page_title="Customer Review Analysis", page_icon="📊", layout="wide")
-
-@st.cache_resource
-def load_model():
-    return spacy.load("en_core_web_sm")
 
 def get_sentiment(text):
     score = TextBlob(text).sentiment.polarity
     if score > 0:   return "Positive"
     elif score < 0: return "Negative"
     else:           return "Neutral"
-
-def extract_entities(text, nlp):
-    return [(ent.text, ent.label_) for ent in nlp(text).ents]
 
 # ── Header ────────────────────────────────────────────────────────────────────
 st.title("📊 Customer Review Analysis Dashboard")
@@ -47,18 +39,9 @@ if "review text" not in df.columns:
 df = df.rename(columns={"review text": "review_text"}).dropna(subset=["review_text"]).copy()
 df["review_text"] = df["review_text"].astype(str).str.lower().str.strip()
 
-st.caption(f"Loaded {len(df):,} reviews.")
-
-# ── Sentiment (run on all rows — fast) ───────────────────────────────────────
+# ── Sentiment ─────────────────────────────────────────────────────────────────
 with st.spinner("Running sentiment analysis…"):
     df["sentiment"] = df["review_text"].apply(get_sentiment)
-
-# ── NER (run on first 500 rows only to avoid timeout) ────────────────────────
-NER_LIMIT = 500
-nlp = load_model()
-with st.spinner(f"Extracting named entities (on first {NER_LIMIT} reviews)…"):
-    ner_df = df.head(NER_LIMIT).copy()
-    ner_df["entities"] = ner_df["review_text"].apply(lambda x: extract_entities(x, nlp))
 
 # ── Summary metrics ───────────────────────────────────────────────────────────
 st.subheader("📌 Summary")
@@ -97,14 +80,15 @@ if combined.strip():
 else:
     st.warning("No text to generate a word cloud.")
 
-# ── Top entities (from sample) ────────────────────────────────────────────────
-st.subheader(f"🏷️ Top Named Entities (sample of {NER_LIMIT} reviews)")
-all_entities = [e[0] for row in ner_df["entities"] for e in row]
-if all_entities:
-    entity_df = pd.DataFrame(Counter(all_entities).most_common(10), columns=["Entity", "Count"])
-    st.dataframe(entity_df, use_container_width=True)
-else:
-    st.info("No named entities found.")
+# ── Top words ─────────────────────────────────────────────────────────────────
+st.subheader("🔤 Top 10 Words")
+words = combined.split()
+stopwords = {"the","a","an","and","or","but","in","on","at","to","for",
+             "of","with","is","it","i","my","was","this","that","they",
+             "have","had","not","be","as","are","we","so","me","he","she"}
+words = [w for w in words if w not in stopwords and len(w) > 2]
+top_words = pd.DataFrame(Counter(words).most_common(10), columns=["Word", "Count"])
+st.dataframe(top_words, use_container_width=True)
 
 # ── Download ──────────────────────────────────────────────────────────────────
 st.download_button(
