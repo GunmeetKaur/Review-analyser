@@ -1,163 +1,173 @@
+"""
+Customer Review Analysis Dashboard
+------------------------------------
+Analyzes customer reviews from a CSV file.
+Features: sentiment analysis, named entity recognition, word cloud, keyword search.
+"""
+
+# ── Standard library ──────────────────────────────────────────────────────────
+import os
+import subprocess
+from collections import Counter
+
+# ── Third-party ───────────────────────────────────────────────────────────────
 import streamlit as st
 import pandas as pd
 import spacy
 from textblob import TextBlob
 from wordcloud import WordCloud
-import matplotlib.pyplot as plt
-from collections import Counter
-import csv
-import time
-from streamlit_lottie import st_lottie
-import requests
 
-# Load spacy model with error handling
+
+# ── App config (must be the first Streamlit call) ─────────────────────────────
+st.set_page_config(
+    page_title="Customer Review Analysis",
+    page_icon="📊",
+    layout="wide",
+)
+
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
 @st.cache_resource
-def load_spacy_model():
+def load_nlp_model():
+    """Download (if needed) and load the spaCy English model once."""
     try:
         return spacy.load("en_core_web_sm")
     except OSError:
-        st.error("⚠️ Spacy model not found. Please check requirements.txt configuration.")
-        st.stop()
+        subprocess.run(["python", "-m", "spacy", "download", "en_core_web_sm"], check=True)
+        return spacy.load("en_core_web_sm")
 
-nlp = load_spacy_model()
 
-# Lottie animation loader
-def load_lottie(url):
+def get_sentiment(text: str) -> str:
+    """Return Positive / Negative / Neutral using TextBlob polarity score."""
+    score = TextBlob(text).sentiment.polarity
+    if score > 0:
+        return "Positive"
+    elif score < 0:
+        return "Negative"
+    return "Neutral"
+
+
+def extract_entities(text: str, nlp) -> list[tuple[str, str]]:
+    """Return a list of (entity_text, entity_label) pairs using spaCy NER."""
+    doc = nlp(text)
+    return [(ent.text, ent.label_) for ent in doc.ents]
+
+
+def load_csv(file) -> pd.DataFrame | None:
+    """
+    Read uploaded CSV with common encoding/formatting issues handled.
+    Returns a DataFrame, or None if the required column is missing.
+    """
     try:
-        r = requests.get(url, timeout=5)
-        if r.status_code == 200:
-            return r.json()
-    except:
+        df = pd.read_csv(file, encoding="latin1", engine="python", on_bad_lines="skip")
+    except Exception as e:
+        st.error(f"Could not read file: {e}")
         return None
 
-# Animated title
-placeholder = st.empty()
-text = "📊 Customer Review Analysis Dashboard"
-typed = ""
+    if "Review Text" not in df.columns:
+        st.error("CSV must contain a column named 'Review Text'.")
+        return None
 
-for char in text:
-    typed += char
-    placeholder.markdown(f"<h1 style='text-align:center'>{typed}</h1>", unsafe_allow_html=True)
-    time.sleep(0.05)
+    return df
 
-# Load Lottie animation
-lottie = load_lottie("https://assets10.lottiefiles.com/packages/lf20_jcikwtux.json")
-if lottie:
-    st_lottie(lottie, height=200)
 
-# Styling
-st.markdown("""
-<style>
-.main {
-    background-color: #f5f7fa;
-}
-.card {
-    padding: 15px;
-    border-radius: 10px;
-    background-color: white;
-    box-shadow: 0px 2px 5px rgba(0,0,0,0.1);
-}
-</style>
-""", unsafe_allow_html=True)
+def clean_reviews(df: pd.DataFrame) -> pd.DataFrame:
+    """Rename column, drop nulls, and normalise text."""
+    df = df.rename(columns={"Review Text": "review_text"}).copy()
+    df = df.dropna(subset=["review_text"])
+    df["review_text"] = df["review_text"].astype(str).str.lower().str.strip()
+    return df
 
-# Subtitle
-st.markdown("Analyze real customer reviews using NLP 🚀")
 
-# Upload CSV
-file = st.file_uploader("Upload CSV", type=["csv"])
+# ── UI ────────────────────────────────────────────────────────────────────────
 
-if file:
-    # READ CSV (robust handling)
-    df = pd.read_csv(
-        file,
-        encoding='latin1',
-        engine='python',
-        on_bad_lines='skip',
-        sep=',',
-        quoting=csv.QUOTE_NONE
-    )
+def main():
+    nlp = load_nlp_model()
 
-    # COLUMN CHECK
-    if 'Review Text' not in df.columns:
-        st.error("CSV must contain 'Review Text' column")
-        st.stop()
+    # Page header
+    st.title("📊 Customer Review Analysis Dashboard")
+    st.caption("Upload a CSV file with a 'Review Text' column to get started.")
 
-    # Rename column
-    df.rename(columns={'Review Text': 'review_text'}, inplace=True)
+    # File upload
+    file = st.file_uploader("Upload CSV", type=["csv"])
+    if not file:
+        st.info("Waiting for a CSV file…")
+        return
 
-    # CLEANING
-    df = df.dropna(subset=['review_text'])
-    df['review_text'] = df['review_text'].astype(str)
-    df['review_text'] = df['review_text'].str.lower()
-    df['review_text'] = df['review_text'].str.strip()
+    # Load & clean
+    df = load_csv(file)
+    if df is None:
+        return
 
-    # PREVIEW
-    st.subheader("📌 Data Preview")
-    st.write(df.head())
+    df = clean_reviews(df)
 
-    # SENTIMENT FUNCTION
-    def get_sentiment(text):
-        score = TextBlob(text).sentiment.polarity
-        if score > 0:
-            return "Positive"
-        elif score < 0:
-            return "Negative"
-        else:
-            return "Neutral"
+    # Run NLP
+    df["sentiment"] = df["review_text"].apply(get_sentiment)
+    df["entities"] = df["review_text"].apply(lambda t: extract_entities(t, nlp))
 
-    df['sentiment'] = df['review_text'].apply(get_sentiment)
-    col1, col2, col3 = st.columns(3)
-
+    # ── Summary metrics ───────────────────────────────────────────────────────
+    st.subheader("📌 Summary")
+    col1, col2, col3, col4 = st.columns(4)
     col1.metric("Total Reviews", len(df))
-    col2.metric("Positive", (df['sentiment'] == "Positive").sum())
-    col3.metric("Negative", (df['sentiment'] == "Negative").sum())
+    col2.metric("Positive", (df["sentiment"] == "Positive").sum())
+    col3.metric("Negative", (df["sentiment"] == "Negative").sum())
+    col4.metric("Neutral",  (df["sentiment"] == "Neutral").sum())
 
-    # ENTITY EXTRACTION
-    def extract_entities(text):
-        doc = nlp(text)
-        return [(ent.text, ent.label_) for ent in doc.ents]
+    # ── Filters ───────────────────────────────────────────────────────────────
+    st.subheader("🔍 Filter Reviews")
+    col_a, col_b = st.columns(2)
 
-    df['entities'] = df['review_text'].apply(extract_entities)
+    with col_a:
+        search = st.text_input("Search by keyword")
+    with col_b:
+        sentiment_filter = st.selectbox("Filter by Sentiment", ["All", "Positive", "Negative", "Neutral"])
 
-    # SEARCH
-    search = st.text_input("🔍 Search keyword")
-
+    filtered = df.copy()
     if search:
-        df = df[df['review_text'].str.contains(search, case=False)]
-
-    # FILTER
-    sentiment_filter = st.selectbox("Filter by Sentiment", ["All", "Positive", "Negative", "Neutral"])
-
+        filtered = filtered[filtered["review_text"].str.contains(search, case=False, na=False)]
     if sentiment_filter != "All":
-        df = df[df['sentiment'] == sentiment_filter]
+        filtered = filtered[filtered["sentiment"] == sentiment_filter]
 
-    # PROCESSED DATA
-    st.subheader("📊 Processed Data")
-    st.write(df)
+    # ── Data table ────────────────────────────────────────────────────────────
+    st.subheader("📄 Reviews")
+    st.dataframe(filtered[["review_text", "sentiment", "entities"]], use_container_width=True)
 
-    # SENTIMENT CHART
+    # ── Charts ────────────────────────────────────────────────────────────────
     st.subheader("📈 Sentiment Distribution")
-    st.bar_chart(df['sentiment'].value_counts())
+    st.bar_chart(filtered["sentiment"].value_counts())
 
-    # WORDCLOUD
+    # ── Word cloud ────────────────────────────────────────────────────────────
     st.subheader("☁️ Word Cloud")
-    text = " ".join(df['review_text'])
-    wordcloud = WordCloud(width=800, height=400, background_color='white').generate(text)
-    st.image(wordcloud.to_array())
+    combined_text = " ".join(filtered["review_text"])
+    if combined_text.strip():
+        wc = WordCloud(width=800, height=400, background_color="white").generate(combined_text)
+        st.image(wc.to_array())
+    else:
+        st.warning("No text available to generate a word cloud.")
 
-    # TOP ENTITIES
-    st.subheader("🏷️ Top Entities")
-    all_entities = []
-    for ents in df['entities']:
-        for e in ents:
-            all_entities.append(e[0])
+    # ── Top named entities ────────────────────────────────────────────────────
+    st.subheader("🏷️ Top Named Entities")
+    all_entity_texts = [
+        entity_text
+        for entity_list in filtered["entities"]
+        for entity_text, _ in entity_list
+    ]
+    if all_entity_texts:
+        top_entities = Counter(all_entity_texts).most_common(10)
+        entity_df = pd.DataFrame(top_entities, columns=["Entity", "Count"])
+        st.dataframe(entity_df, use_container_width=True)
+    else:
+        st.info("No named entities found in the filtered reviews.")
 
-    entity_counts = Counter(all_entities)
-    st.write(entity_counts.most_common(10))
-
-    # DOWNLOAD
+    # ── Download ──────────────────────────────────────────────────────────────
     st.download_button(
-        "⬇️ Download Processed Data",
-        df.to_csv(index=False),
-        "processed_reviews.csv"
+        label="⬇️ Download Processed Data",
+        data=filtered.drop(columns=["entities"]).to_csv(index=False),
+        file_name="processed_reviews.csv",
+        mime="text/csv",
     )
+
+
+if __name__ == "__main__":
+    main()
