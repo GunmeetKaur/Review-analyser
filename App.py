@@ -13,11 +13,9 @@ from wordcloud import WordCloud
 
 st.set_page_config(page_title="Customer Review Analysis", page_icon="📊", layout="wide")
 
-
 @st.cache_resource
 def load_model():
     return spacy.load("en_core_web_sm")
-
 
 def get_sentiment(text):
     score = TextBlob(text).sentiment.polarity
@@ -25,10 +23,8 @@ def get_sentiment(text):
     elif score < 0: return "Negative"
     else:           return "Neutral"
 
-
 def extract_entities(text, nlp):
     return [(ent.text, ent.label_) for ent in nlp(text).ents]
-
 
 # ── Header ────────────────────────────────────────────────────────────────────
 st.title("📊 Customer Review Analysis Dashboard")
@@ -48,24 +44,26 @@ if "review text" not in df.columns:
     st.error("CSV must contain a 'Review Text' column.")
     st.stop()
 
-df = (
-    df.rename(columns={"review text": "review_text"})
-      .dropna(subset=["review_text"])
-      .copy()
-)
+df = df.rename(columns={"review text": "review_text"}).dropna(subset=["review_text"]).copy()
 df["review_text"] = df["review_text"].astype(str).str.lower().str.strip()
 
-# ── NLP ───────────────────────────────────────────────────────────────────────
-nlp = load_model()
+st.caption(f"Loaded {len(df):,} reviews.")
 
-with st.spinner("Running analysis… this may take a moment on large files."):
+# ── Sentiment (run on all rows — fast) ───────────────────────────────────────
+with st.spinner("Running sentiment analysis…"):
     df["sentiment"] = df["review_text"].apply(get_sentiment)
-    df["entities"]  = df["review_text"].apply(lambda x: extract_entities(x, nlp))
+
+# ── NER (run on first 500 rows only to avoid timeout) ────────────────────────
+NER_LIMIT = 500
+nlp = load_model()
+with st.spinner(f"Extracting named entities (on first {NER_LIMIT} reviews)…"):
+    ner_df = df.head(NER_LIMIT).copy()
+    ner_df["entities"] = ner_df["review_text"].apply(lambda x: extract_entities(x, nlp))
 
 # ── Summary metrics ───────────────────────────────────────────────────────────
 st.subheader("📌 Summary")
 c1, c2, c3, c4 = st.columns(4)
-c1.metric("Total Reviews", len(df))
+c1.metric("Total Reviews", f"{len(df):,}")
 c2.metric("Positive",  (df["sentiment"] == "Positive").sum())
 c3.metric("Negative",  (df["sentiment"] == "Negative").sum())
 c4.metric("Neutral",   (df["sentiment"] == "Neutral").sum())
@@ -84,7 +82,7 @@ if sentiment_filter != "All":
 
 # ── Table ─────────────────────────────────────────────────────────────────────
 st.subheader("📄 Reviews")
-st.dataframe(filtered[["review_text", "sentiment", "entities"]], use_container_width=True)
+st.dataframe(filtered[["review_text", "sentiment"]], use_container_width=True)
 
 # ── Chart ─────────────────────────────────────────────────────────────────────
 st.subheader("📈 Sentiment Distribution")
@@ -99,9 +97,9 @@ if combined.strip():
 else:
     st.warning("No text to generate a word cloud.")
 
-# ── Top entities ──────────────────────────────────────────────────────────────
-st.subheader("🏷️ Top Named Entities")
-all_entities = [e[0] for row in filtered["entities"] for e in row]
+# ── Top entities (from sample) ────────────────────────────────────────────────
+st.subheader(f"🏷️ Top Named Entities (sample of {NER_LIMIT} reviews)")
+all_entities = [e[0] for row in ner_df["entities"] for e in row]
 if all_entities:
     entity_df = pd.DataFrame(Counter(all_entities).most_common(10), columns=["Entity", "Count"])
     st.dataframe(entity_df, use_container_width=True)
@@ -111,7 +109,7 @@ else:
 # ── Download ──────────────────────────────────────────────────────────────────
 st.download_button(
     label="⬇️ Download Processed Data",
-    data=filtered.drop(columns=["entities"]).to_csv(index=False),
+    data=filtered.to_csv(index=False),
     file_name="processed_reviews.csv",
     mime="text/csv",
 )
