@@ -1,169 +1,117 @@
 """
 Customer Review Analysis Dashboard
+Analyzes customer reviews from a CSV file using NLP.
 """
 
-# ── Standard library ─────────────────────────────
-import os
-import sys
 from collections import Counter
 
-# ── Third-party ─────────────────────────────────
 import streamlit as st
 import pandas as pd
 import spacy
 from textblob import TextBlob
 from wordcloud import WordCloud
 
-# ── App config ──────────────────────────────────
-st.set_page_config(
-    page_title="Customer Review Analysis",
-    page_icon="📊",
-    layout="wide",
-)
+st.set_page_config(page_title="Customer Review Analysis", page_icon="📊", layout="wide")
 
-# ── Load NLP model (cached) ─────────────────────
+
 @st.cache_resource
-def load_nlp_model():
-    try:
-        return spacy.load("en_core_web_sm")
-    except:
-        os.system(f"{sys.executable} -m spacy download en_core_web_sm")
-        return spacy.load("en_core_web_sm")
+def load_model():
+    return spacy.load("en_core_web_sm")
 
-# ── Sentiment function ──────────────────────────
+
 def get_sentiment(text):
     score = TextBlob(text).sentiment.polarity
-    if score > 0:
-        return "Positive"
-    elif score < 0:
-        return "Negative"
-    return "Neutral"
+    if score > 0:   return "Positive"
+    elif score < 0: return "Negative"
+    else:           return "Neutral"
 
-# ── Entity extraction ───────────────────────────
+
 def extract_entities(text, nlp):
-    doc = nlp(text)
-    return [(ent.text, ent.label_) for ent in doc.ents]
+    return [(ent.text, ent.label_) for ent in nlp(text).ents]
 
-# ── Load CSV ────────────────────────────────────
-def load_csv(file):
-    try:
-        df = pd.read_csv(file, encoding="latin1", engine="python", on_bad_lines="skip")
-    except Exception as e:
-        st.error(f"Error reading file: {e}")
-        return None
 
-    # normalize column names
-    df.columns = df.columns.str.strip().str.lower()
+# ── Header ────────────────────────────────────────────────────────────────────
+st.title("📊 Customer Review Analysis Dashboard")
+st.caption("Upload a CSV file with a 'Review Text' column to get started.")
 
-    if "review text" not in df.columns:
-        st.error("CSV must contain 'Review Text' column")
-        return None
+# ── File upload ───────────────────────────────────────────────────────────────
+file = st.file_uploader("Upload CSV", type=["csv"])
+if file is None:
+    st.info("Waiting for a CSV file…")
+    st.stop()
 
-    df.rename(columns={"review text": "review_text"}, inplace=True)
-    return df
+# ── Load & clean ──────────────────────────────────────────────────────────────
+df = pd.read_csv(file, encoding="latin1", engine="python", on_bad_lines="skip")
+df.columns = df.columns.str.strip().str.lower()
 
-# ── Clean data ──────────────────────────────────
-def clean_data(df):
-    df = df.dropna(subset=["review_text"])
-    df["review_text"] = df["review_text"].astype(str).str.lower().str.strip()
-    return df
+if "review text" not in df.columns:
+    st.error("CSV must contain a 'Review Text' column.")
+    st.stop()
 
-# ── MAIN APP ────────────────────────────────────
-def main():
+df = (
+    df.rename(columns={"review text": "review_text"})
+      .dropna(subset=["review_text"])
+      .copy()
+)
+df["review_text"] = df["review_text"].astype(str).str.lower().str.strip()
 
-    st.title("📊 Customer Review Analysis Dashboard")
-    st.caption("Upload a CSV file with a 'Review Text' column")
+# ── NLP ───────────────────────────────────────────────────────────────────────
+nlp = load_model()
 
-    # Upload file FIRST
-    file = st.file_uploader("Upload CSV", type=["csv"])
-
-    if file is None:
-        st.info("Waiting for a CSV file…")
-        return
-
-    st.success(f"File uploaded: {file.name}")
-
-    # Load model AFTER upload (fixes bug)
-    with st.spinner("Loading NLP model..."):
-        nlp = load_nlp_model()
-
-    # Load data
-    df = load_csv(file)
-    if df is None:
-        return
-
-    df = clean_data(df)
-
-    # Apply NLP
+with st.spinner("Running analysis… this may take a moment on large files."):
     df["sentiment"] = df["review_text"].apply(get_sentiment)
-    df["entities"] = df["review_text"].apply(lambda x: extract_entities(x, nlp))
+    df["entities"]  = df["review_text"].apply(lambda x: extract_entities(x, nlp))
 
-    # ── Metrics ───────────────────────────────
-    st.subheader("📌 Summary")
-    col1, col2, col3, col4 = st.columns(4)
+# ── Summary metrics ───────────────────────────────────────────────────────────
+st.subheader("📌 Summary")
+c1, c2, c3, c4 = st.columns(4)
+c1.metric("Total Reviews", len(df))
+c2.metric("Positive",  (df["sentiment"] == "Positive").sum())
+c3.metric("Negative",  (df["sentiment"] == "Negative").sum())
+c4.metric("Neutral",   (df["sentiment"] == "Neutral").sum())
 
-    col1.metric("Total Reviews", len(df))
-    col2.metric("Positive", (df["sentiment"] == "Positive").sum())
-    col3.metric("Negative", (df["sentiment"] == "Negative").sum())
-    col4.metric("Neutral", (df["sentiment"] == "Neutral").sum())
+# ── Filters ───────────────────────────────────────────────────────────────────
+st.subheader("🔍 Filter")
+col_a, col_b = st.columns(2)
+search           = col_a.text_input("Search keyword")
+sentiment_filter = col_b.selectbox("Sentiment", ["All", "Positive", "Negative", "Neutral"])
 
-    # ── Filters ───────────────────────────────
-    st.subheader("🔍 Filter Reviews")
-    search = st.text_input("Search keyword")
-    sentiment_filter = st.selectbox(
-        "Filter by Sentiment",
-        ["All", "Positive", "Negative", "Neutral"]
-    )
+filtered = df.copy()
+if search:
+    filtered = filtered[filtered["review_text"].str.contains(search, case=False, na=False)]
+if sentiment_filter != "All":
+    filtered = filtered[filtered["sentiment"] == sentiment_filter]
 
-    filtered = df.copy()
+# ── Table ─────────────────────────────────────────────────────────────────────
+st.subheader("📄 Reviews")
+st.dataframe(filtered[["review_text", "sentiment", "entities"]], use_container_width=True)
 
-    if search:
-        filtered = filtered[filtered["review_text"].str.contains(search, case=False, na=False)]
+# ── Chart ─────────────────────────────────────────────────────────────────────
+st.subheader("📈 Sentiment Distribution")
+st.bar_chart(filtered["sentiment"].value_counts())
 
-    if sentiment_filter != "All":
-        filtered = filtered[filtered["sentiment"] == sentiment_filter]
+# ── Word cloud ────────────────────────────────────────────────────────────────
+st.subheader("☁️ Word Cloud")
+combined = " ".join(filtered["review_text"])
+if combined.strip():
+    wc = WordCloud(width=800, height=400, background_color="white").generate(combined)
+    st.image(wc.to_array())
+else:
+    st.warning("No text to generate a word cloud.")
 
-    # ── Table ────────────────────────────────
-    st.subheader("📄 Reviews")
-    st.dataframe(filtered[["review_text", "sentiment", "entities"]])
+# ── Top entities ──────────────────────────────────────────────────────────────
+st.subheader("🏷️ Top Named Entities")
+all_entities = [e[0] for row in filtered["entities"] for e in row]
+if all_entities:
+    entity_df = pd.DataFrame(Counter(all_entities).most_common(10), columns=["Entity", "Count"])
+    st.dataframe(entity_df, use_container_width=True)
+else:
+    st.info("No named entities found.")
 
-    # ── Chart ────────────────────────────────
-    st.subheader("📈 Sentiment Distribution")
-    st.bar_chart(filtered["sentiment"].value_counts())
-
-    # ── WordCloud ────────────────────────────
-    st.subheader("☁️ Word Cloud")
-    text = " ".join(filtered["review_text"])
-
-    if text.strip():
-        wc = WordCloud(width=800, height=400, background_color="white").generate(text)
-        st.image(wc.to_array())
-    else:
-        st.warning("No text for word cloud")
-
-    # ── Entities ─────────────────────────────
-    st.subheader("🏷️ Top Entities")
-
-    all_entities = [
-        entity_text
-        for entity_list in filtered["entities"]
-        for entity_text, _ in entity_list
-    ]
-
-    if all_entities:
-        top_entities = Counter(all_entities).most_common(10)
-        entity_df = pd.DataFrame(top_entities, columns=["Entity", "Count"])
-        st.dataframe(entity_df)
-    else:
-        st.info("No entities found")
-
-    # ── Download ─────────────────────────────
-    st.download_button(
-        "⬇️ Download Processed Data",
-        filtered.drop(columns=["entities"]).to_csv(index=False),
-        "processed_reviews.csv"
-    )
-
-# ── RUN ────────────────────────────────────────
-if __name__ == "__main__":
-    main()
+# ── Download ──────────────────────────────────────────────────────────────────
+st.download_button(
+    label="⬇️ Download Processed Data",
+    data=filtered.drop(columns=["entities"]).to_csv(index=False),
+    file_name="processed_reviews.csv",
+    mime="text/csv",
+)
