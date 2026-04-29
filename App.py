@@ -7,7 +7,7 @@ Features: sentiment analysis, named entity recognition, word cloud, keyword sear
 
 # ── Standard library ──────────────────────────────────────────────────────────
 import os
-import subprocess
+import sys
 from collections import Counter
 
 # ── Third-party ───────────────────────────────────────────────────────────────
@@ -34,7 +34,9 @@ def load_nlp_model():
     try:
         return spacy.load("en_core_web_sm")
     except OSError:
-        subprocess.run(["python", "-m", "spacy", "download", "en_core_web_sm"], check=True)
+        # Use sys.executable to ensure we call the same Python that is running
+        # this app — important on Streamlit Cloud where 'python' may not be in PATH
+        os.system(f"{sys.executable} -m spacy download en_core_web_sm")
         return spacy.load("en_core_web_sm")
 
 
@@ -83,15 +85,17 @@ def clean_reviews(df: pd.DataFrame) -> pd.DataFrame:
 # ── UI ────────────────────────────────────────────────────────────────────────
 
 def main():
-    nlp = load_nlp_model()
-
     # Page header
     st.title("📊 Customer Review Analysis Dashboard")
     st.caption("Upload a CSV file with a 'Review Text' column to get started.")
 
+    # Load model with spinner — first load downloads the model (~30s on cloud)
+    with st.spinner("Loading NLP model… (first load may take ~30 seconds)"):
+        nlp = load_nlp_model()
+
     # File upload
     file = st.file_uploader("Upload CSV", type=["csv"])
-    if not file:
+    if file is None:
         st.info("Waiting for a CSV file…")
         return
 
